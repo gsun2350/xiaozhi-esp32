@@ -126,6 +126,7 @@ public:
     bool IsVoiceDetected() const { return voice_detected_; }
     bool IsIdle();
     bool IsPlaybackIdle();
+    bool IsMusicPlaybackIdle();
     bool IsWakeWordRunning() const {
         return xEventGroupGetBits(event_group_) & AS_EVENT_WAKE_WORD_RUNNING;
     }
@@ -145,6 +146,9 @@ public:
     bool PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet, bool wait = false);
     std::unique_ptr<AudioStreamPacket> PopPacketFromSendQueue();
     void PlaySound(const std::string_view& sound);
+    // 音乐 PCM 经同一输出任务播放，避免与 TTS 并发写入 Codec。
+    bool SubmitMusicPcm(std::vector<int16_t>&& pcm);
+    void SetMusicOutputEnabled(bool enabled);
     bool ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples);
     void ResetDecoder();
     void SetModelsList(srmodel_list_t* models_list);
@@ -191,8 +195,11 @@ private:
         audio_testing_queue_;
     FixedQueue<AudioTask, MAX_ENCODE_TASKS_IN_QUEUE> audio_encode_queue_;
     FixedQueue<AudioTask, MAX_PLAYBACK_TASKS_IN_QUEUE> audio_playback_queue_;
+    FixedQueue<std::vector<int16_t>, 2> music_playback_queue_;
+    bool music_output_enabled_ = false;
     bool decode_in_flight_ = false;
     bool output_in_flight_ = false;
+    bool music_output_in_flight_ = false;
     bool playback_drained_notified_ = true;
     uint32_t playback_generation_ = 0;
     // For server AEC

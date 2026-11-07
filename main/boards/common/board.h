@@ -13,6 +13,7 @@
 #include "backlight.h"
 #include "camera.h"
 #include "assets.h"
+#include "device_state.h"
 
 /**
  * Network events for unified callback
@@ -82,6 +83,12 @@ public:
     virtual void SetPowerSaveLevel(PowerSaveLevel level) = 0;
     virtual std::string GetBoardJson() = 0;
     virtual std::string GetDeviceStatusJson() = 0;
+    // 板级外设可观察应用状态；默认不影响其他板型。
+    virtual void OnDeviceStateChanged(DeviceState state) { (void)state; }
+    // 播放本地音乐的板型可以在空闲态仅保留按键唤醒。
+    virtual bool ShouldEnableWakeWordDetection() const { return true; }
+    // 音乐因对话中断时，在本轮回复结束后回到空闲态以恢复播放。
+    virtual bool ShouldReturnToIdleAfterTts() const { return false; }
 };
 
 #define DECLARE_BOARD(BOARD_CLASS_NAME) \

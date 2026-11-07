@@ -226,6 +226,7 @@ void Application::Run() {
             if (audio_service_.IsPlaybackIdle()) {
                 notify_player_.OnPlaybackDrained();
             }
+            CloseMusicAudioChannelIfReady();
             // Deferred listening start (auto mode): the playback queue has
             // drained, so it is now safe to enable voice processing.
             if (pending_listening_start_ && GetDeviceState() == kDeviceStateListening &&
@@ -654,7 +655,11 @@ void Application::InitializeProtocol() {
             } else if (strcmp(state->valuestring, "stop") == 0) {
                 Schedule([this]() {
                     if (GetDeviceState() == kDeviceStateSpeaking) {
-                        if (listening_mode_ == kListeningModeManualStop) {
+                        if (Board::GetInstance().ShouldReturnToIdleAfterTts()) {
+                            // 先播放完已收到的回复，再结束在线语音会话。
+                            pending_music_channel_close_ = true;
+                            SetDeviceState(kDeviceStateIdle);
+                        } else if (listening_mode_ == kListeningModeManualStop) {
                             SetDeviceState(kDeviceStateIdle);
                         } else {
                             SetDeviceState(kDeviceStateListening);
@@ -1019,6 +1024,9 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
 
 void Application::HandleStateChangedEvent() {
     DeviceState new_state = state_machine_.GetState();
+    if (new_state != kDeviceStateIdle) {
+        pending_music_channel_close_ = false;
+    }
     clock_ticks_ = 0;
     // Any state change invalidates a pending deferred listening start;
     // the Listening case below re-arms it when needed.
@@ -1028,6 +1036,7 @@ void Application::HandleStateChangedEvent() {
     auto display = board.GetDisplay();
     auto led = board.GetLed();
     led->OnStateChanged();
+    board.OnDeviceStateChanged(new_state);
 
     switch (new_state) {
         case kDeviceStateUnknown:
@@ -1042,7 +1051,7 @@ void Application::HandleStateChangedEvent() {
                     "neutral");  // Then set emotion (wechat mode checks child count)
             }
             audio_service_.EnableVoiceProcessing(false);
-            audio_service_.EnableWakeWordDetection(true);
+            audio_service_.EnableWakeWordDetection(board.ShouldEnableWakeWordDetection());
             break;
         case kDeviceStateConnecting:
             display->SetStatus(Lang::Strings::CONNECTING);
@@ -1090,6 +1099,19 @@ void Application::HandleStateChangedEvent() {
         default:
             // Do nothing
             break;
+    }
+    CloseMusicAudioChannelIfReady();
+}
+
+void Application::CloseMusicAudioChannelIfReady() {
+    if (!pending_music_channel_close_ || GetDeviceState() != kDeviceStateIdle ||
+        !audio_service_.IsPlaybackIdle()) {
+        return;
+    }
+    pending_music_channel_close_ = false;
+    if (protocol_ && protocol_->IsAudioChannelOpened()) {
+        ESP_LOGI(TAG, "Closing voice session after music reply");
+        protocol_->CloseAudioChannel();
     }
 }
 

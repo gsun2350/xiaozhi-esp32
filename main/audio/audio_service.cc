@@ -183,6 +183,8 @@ void AudioService::Stop() {
         audio_encode_queue_.clear();
         audio_decode_queue_.clear();
         audio_playback_queue_.clear();
+        music_playback_queue_.clear();
+        music_output_enabled_ = false;
         audio_testing_queue_.clear();
         notify_drained = MarkPlaybackDrainedLocked();
         audio_queue_cv_.notify_all();
@@ -327,14 +329,27 @@ void AudioService::AudioOutputTask() {
     while (true) {
         std::unique_lock<std::mutex> lock(audio_queue_mutex_);
         audio_queue_cv_.wait(
-            lock, [this]() { return !audio_playback_queue_.empty() || service_stopped_.load(); });
+            lock, [this]() {
+                return !audio_playback_queue_.empty() ||
+                       (music_output_enabled_ && !music_playback_queue_.empty()) ||
+                       service_stopped_.load();
+            });
         if (service_stopped_.load()) {
             break;
         }
 
-        auto task = std::move(audio_playback_queue_.front());
-        audio_playback_queue_.pop_front();
-        output_in_flight_ = true;
+        // AI 语音始终先于本地音乐。音乐队列至多两帧，按键打断时会丢弃待播帧。
+        const bool is_music = audio_playback_queue_.empty();
+        AudioTask task;
+        if (is_music) {
+            task.pcm = std::move(music_playback_queue_.front());
+            music_playback_queue_.pop_front();
+        } else {
+            task = std::move(audio_playback_queue_.front());
+            audio_playback_queue_.pop_front();
+        }
+        output_in_flight_ = !is_music;
+        music_output_in_flight_ = is_music;
         audio_queue_cv_.notify_all();
         lock.unlock();
 
@@ -344,7 +359,7 @@ void AudioService::AudioOutputTask() {
             codec_->EnableOutput(true);
         }
 
-        if (task.playback_id != 0 && callbacks_.on_playback_progress) {
+        if (!is_music && task.playback_id != 0 && callbacks_.on_playback_progress) {
             callbacks_.on_playback_progress(task.playback_id, task.media_position_ms);
         }
 
@@ -358,7 +373,7 @@ void AudioService::AudioOutputTask() {
         lock.lock();
 #if CONFIG_USE_SERVER_AEC
         /* Record the timestamp for server AEC */
-        if (task.timestamp > 0) {
+        if (!is_music && task.timestamp > 0) {
             if (timestamp_queue_.full()) {
                 timestamp_queue_.pop_front();
             }
@@ -366,6 +381,7 @@ void AudioService::AudioOutputTask() {
         }
 #endif
         output_in_flight_ = false;
+        music_output_in_flight_ = false;
         notify_drained = MarkPlaybackDrainedLocked();
         audio_queue_cv_.notify_all();
         lock.unlock();
@@ -765,6 +781,31 @@ void AudioService::EnableDeviceAec(bool enable) {
 
 void AudioService::SetCallbacks(AudioServiceCallbacks& callbacks) { callbacks_ = callbacks; }
 
+bool AudioService::SubmitMusicPcm(std::vector<int16_t>&& pcm) {
+    if (pcm.empty()) {
+        return false;
+    }
+    std::unique_lock<std::mutex> lock(audio_queue_mutex_);
+    audio_queue_cv_.wait_for(lock, std::chrono::milliseconds(60), [this]() {
+        return !music_playback_queue_.full() || !music_output_enabled_ || service_stopped_.load();
+    });
+    if (!music_output_enabled_ || service_stopped_.load() || music_playback_queue_.full()) {
+        return false;
+    }
+    music_playback_queue_.push_back(std::move(pcm));
+    audio_queue_cv_.notify_all();
+    return true;
+}
+
+void AudioService::SetMusicOutputEnabled(bool enabled) {
+    std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+    music_output_enabled_ = enabled;
+    if (!enabled) {
+        music_playback_queue_.clear();
+    }
+    audio_queue_cv_.notify_all();
+}
+
 void AudioService::PlaySound(const std::string_view& ogg) {
     if (!codec_->output_enabled()) {
         esp_timer_stop(audio_power_timer_);
@@ -797,6 +838,11 @@ bool AudioService::IsIdle() {
 bool AudioService::IsPlaybackIdle() {
     std::lock_guard<std::mutex> lock(audio_queue_mutex_);
     return IsPlaybackDrainedLocked();
+}
+
+bool AudioService::IsMusicPlaybackIdle() {
+    std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+    return music_playback_queue_.empty() && !music_output_in_flight_;
 }
 
 void AudioService::ResetDecoder() {

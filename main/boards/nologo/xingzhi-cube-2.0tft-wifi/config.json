@@ -1,0 +1,11 @@
+{
+    "manufacturer": "nologo",
+    "type": "xingzhi-cube-2.0tft-wifi-tf-music",
+    "target": "esp32s3",
+    "builds": [
+        {
+            "name": "xingzhi-cube-2.0tft-wifi-tf-music",
+            "sdkconfig_append": []
+        }
+    ]
+}

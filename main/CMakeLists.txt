@@ -781,6 +781,16 @@ elseif(CONFIG_BOARD_TYPE_XINGZHI_CUBE_1_54TFT_WIFI)
     set(BUILTIN_TEXT_FONT font_noto_sans_basic_20_4)
     set(BUILTIN_ICON_FONT font_material_symbols_20_4)
     set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_128)
+elseif(CONFIG_BOARD_TYPE_XINGZHI_CUBE_2_0TFT_WIFI_TF_MUSIC)
+    set(BOARD_DIR "nologo/xingzhi-cube-2.0tft-wifi")
+    set(BUILTIN_TEXT_FONT font_noto_sans_basic_20_4)
+    set(BUILTIN_ICON_FONT font_material_symbols_20_4)
+    set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_128)
+    list(APPEND SOURCES
+        "music/sd_card_manager.cc"
+        "music/music_player.cc"
+        "music/music_mcp_tools.cc")
+    list(APPEND INCLUDE_DIRS "music")
 elseif(CONFIG_BOARD_TYPE_XINGZHI_CUBE_1_54TFT_ML307)
     set(BOARD_DIR "nologo/xingzhi-cube-1.54tft-ml307")
     set(BUILTIN_TEXT_FONT font_noto_sans_basic_20_4)
@@ -1191,6 +1201,9 @@ if(CONFIG_BOARD_TYPE_ESP32_P4_FUNCTION_EV_BOARD)
         esp_driver_sdmmc
         sdmmc
     )
+endif()
+if(CONFIG_BOARD_TYPE_XINGZHI_CUBE_2_0TFT_WIFI_TF_MUSIC)
+    list(APPEND MAIN_PRIV_REQUIRES_EXTRA esp_driver_sdmmc sdmmc)
 endif()
 idf_component_register(SRCS ${SOURCES}
                     EMBED_FILES ${LANG_SOUNDS} ${COMMON_SOUNDS}
