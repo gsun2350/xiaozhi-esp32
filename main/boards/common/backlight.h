@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <mutex>
 
 #include <driver/gpio.h>
 #include <esp_timer.h>
@@ -14,7 +15,12 @@ public:
 
     void RestoreBrightness();
     void SetBrightness(uint8_t brightness, bool permanent = false);
-    inline uint8_t brightness() const { return brightness_; }
+    // 仅控制物理输出，不修改持久化的正常亮度。默认启用，兼容其他板型。
+    void SetEnabled(bool enabled);
+    inline uint8_t brightness() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return brightness_;
+    }
 
 protected:
     void OnTransitionTimer();
@@ -24,6 +30,8 @@ protected:
     uint8_t brightness_ = 0;
     uint8_t target_brightness_ = 0;
     uint8_t step_ = 1;
+    mutable std::mutex mutex_;
+    bool enabled_ = true;
 };
 
 

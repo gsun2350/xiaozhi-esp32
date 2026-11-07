@@ -24,6 +24,8 @@ public:
     virtual ~CircularStrip();
 
     void OnStateChanged() override;
+    // 禁止状态更新和定时动画输出；默认启用，兼容其他板型。
+    void SetEnabled(bool enabled);
     void SetBrightness(uint8_t default_brightness, uint8_t low_brightness);
     void SetAllColor(StripColor color);
     void SetSingleColor(uint8_t index, StripColor color);
@@ -34,6 +36,7 @@ public:
 
 private:
     std::mutex mutex_;
+    bool enabled_ = true;
     TaskHandle_t blink_task_ = nullptr;
     led_strip_handle_t led_strip_ = nullptr;
     int max_leds_ = 0;
@@ -53,7 +56,7 @@ private:
     StripColor breathe_color_   = {};
     int        scroll_offset_   = 0;
 
-    void StartStripTask(int interval_ms, std::function<void()> cb);
+    void StartStripTaskLocked(int interval_ms, std::function<void()> cb);
     void Rainbow(StripColor low, StripColor high, int interval_ms);
     void FadeOut(int interval_ms);
 };

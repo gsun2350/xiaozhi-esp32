@@ -17,6 +17,7 @@
 
 #include <esp_lcd_panel_vendor.h>
 #include <esp_log.h>
+#include <atomic>
 #include <initializer_list>
 
 #include <driver/i2c_master.h>
@@ -29,6 +30,8 @@
 class XINGZHI_CUBE_2_0TFT_WIFI : public WifiBoard {
 private:
     Button boot_button_;
+    std::atomic_bool long_press_consumed_{false};
+    bool display_lights_enabled_ = false;
     LcdDisplay* display_;
     PowerSaveTimer* power_save_timer_;
     PowerManager* power_manager_;
@@ -112,14 +115,38 @@ private:
     }
 
     void InitializeButtons() {
-        boot_button_.OnClick([this]() {
-            power_save_timer_->WakeUp();
-            auto& app = Application::GetInstance();
-            if (app.GetDeviceState() == kDeviceStateStarting) {
-                EnterWifiConfigMode();
+        boot_button_.OnPressDown([this]() { long_press_consumed_.store(false); });
+        boot_button_.OnLongPress([this]() {
+            if (long_press_consumed_.exchange(true)) {
                 return;
             }
-            app.ToggleChatState();
+            Application::GetInstance().Schedule([this]() {
+                display_lights_enabled_ = !display_lights_enabled_;
+                if (display_lights_enabled_) {
+                    // 先退出省电状态，再允许背光恢复，避免恢复到省电亮度。
+                    power_save_timer_->WakeUp();
+                    GetBacklight()->SetEnabled(true);
+                    GetBacklight()->RestoreBrightness();
+                    static_cast<CircularStrip*>(GetLed())->SetEnabled(true);
+                } else {
+                    GetBacklight()->SetEnabled(false);
+                    static_cast<CircularStrip*>(GetLed())->SetEnabled(false);
+                }
+            });
+        });
+        boot_button_.OnClick([this]() {
+            if (long_press_consumed_.load()) {
+                return;
+            }
+            Application::GetInstance().Schedule([this]() {
+                power_save_timer_->WakeUp();
+                auto& app = Application::GetInstance();
+                if (app.GetDeviceState() == kDeviceStateStarting) {
+                    EnterWifiConfigMode();
+                    return;
+                }
+                app.ToggleChatState();
+            });
         });
     }
 
@@ -164,7 +191,10 @@ private:
     }
 
 public:
-    XINGZHI_CUBE_2_0TFT_WIFI() : boot_button_(BOOT_BUTTON_GPIO) {
+    XINGZHI_CUBE_2_0TFT_WIFI() : boot_button_(BOOT_BUTTON_GPIO, false, 2000) {
+        // 初始化输出后立即关闭，不读取或改写正常亮度设置。
+        GetBacklight()->SetEnabled(false);
+        static_cast<CircularStrip*>(GetLed())->SetEnabled(false);
         InitializeI2c();
         InitializeGpio();
         InitializePowerManager();
@@ -172,7 +202,6 @@ public:
         InitializeSpi();
         InitializeButtons();
         InitializeSt7789Display();
-        GetBacklight()->RestoreBrightness();
         RegisterMusicMcpTools();
     }
 

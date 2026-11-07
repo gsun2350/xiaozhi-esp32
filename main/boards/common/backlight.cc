@@ -48,26 +48,48 @@ void Backlight::SetBrightness(uint8_t brightness, bool permanent) {
         brightness = 100;
     }
 
-    if (brightness_ == brightness) {
-        return;
-    }
-
     if (permanent) {
         Settings settings("display", true);
         settings.SetInt("brightness", brightness);
     }
 
+    std::lock_guard<std::mutex> lock(mutex_);
     target_brightness_ = brightness;
+    if (!enabled_) {
+        return;
+    }
+    if (brightness_ == brightness) {
+        return;
+    }
     step_ = (target_brightness_ > brightness_) ? 1 : -1;
 
     if (transition_timer_ != nullptr) {
+        esp_timer_stop(transition_timer_);
         // 启动定时器，每 5ms 更新一次
         esp_timer_start_periodic(transition_timer_, 5 * 1000);
     }
     ESP_LOGI(TAG, "Set brightness to %d", brightness);
 }
 
+void Backlight::SetEnabled(bool enabled) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (enabled_ == enabled) {
+        return;
+    }
+    enabled_ = enabled;
+    esp_timer_stop(transition_timer_);
+    if (!enabled) {
+        // 与渐变回调共用互斥锁，保证关闭返回后旧回调不能重新点亮背光。
+        brightness_ = 0;
+        SetBrightnessImpl(0);
+    }
+}
+
 void Backlight::OnTransitionTimer() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!enabled_) {
+        return;
+    }
     if (brightness_ == target_brightness_) {
         esp_timer_stop(transition_timer_);
         return;
